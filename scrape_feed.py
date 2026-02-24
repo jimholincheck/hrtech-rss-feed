@@ -37,10 +37,6 @@ def save_article_dates(dates_dict):
     except Exception as e:
         print(f"Warning: Could not save dates file: {e}")
 
-# Date parsing removed - using scrape date instead
-
-# Date fetching removed - we'll use scrape date for discovery instead
-
 def scrape_articles(max_pages=MAX_PAGES):
     """
     Scrape articles from Mercer HR Tech content pages.
@@ -77,61 +73,108 @@ def scrape_articles(max_pages=MAX_PAGES):
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find all article links - look for links that go to /article/
-            article_links = soup.find_all('a', href=lambda x: x and '/article/' in x)
+            # Find all links with /article/ in the href
+            all_links = soup.find_all('a', href=lambda x: x and '/article/' in x)
+            
+            print(f"  Found {len(all_links)} total article links")
+            
+            # Build a dict of URL -> link objects, preferring longer link text (titles over "See More")
+            url_to_best_link = {}
+            
+            for link in all_links:
+                href = link.get('href', '')
+                
+                # Make URL absolute
+                if href.startswith('/'):
+                    full_url = f"https://taap.mercer.com{href}"
+                elif not href.startswith('http'):
+                    full_url = f"https://taap.mercer.com{href}"
+                else:
+                    full_url = href
+                
+                full_url = full_url.strip()
+                
+                link_text = link.get_text(strip=True)
+                
+                # If this URL isn't in our dict yet, or if this link text is longer
+                # (meaning it's probably the title, not "See More"), use it
+                if full_url not in url_to_best_link:
+                    url_to_best_link[full_url] = link
+                else:
+                    existing_text = url_to_best_link[full_url].get_text(strip=True)
+                    if len(link_text) > len(existing_text):
+                        url_to_best_link[full_url] = link
+            
+            print(f"  Identified {len(url_to_best_link)} unique articles")
             
             page_count = 0
-            for link in article_links:
-                article_url = link.get('href')
-                
-                # Make URL absolute if it's relative
-                if article_url.startswith('/'):
-                    article_url = f"https://taap.mercer.com{article_url}"
-                elif not article_url.startswith('http'):
-                    article_url = f"https://taap.mercer.com{article_url}"
-                
-                # Clean up URL
-                article_url = article_url.strip()
-                
-                # Skip duplicates and "See More" links in same paragraph
+            
+            # Now process each unique article
+            for article_url, best_link in url_to_best_link.items():
+                # Skip if we've seen this URL before
                 if article_url in seen_links:
                     continue
                 
                 seen_links.add(article_url)
                 
-                # Extract title (from link text, not from the page)
-                # Look for the title in the heading above the link
-                title = ""
-                parent = link.find_parent()
-                if parent:
-                    # Look for heading tags
-                    heading = parent.find_previous(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
-                    if heading:
-                        title = heading.get_text(strip=True)
+                # Get title from the best link we found
+                title = best_link.get_text(strip=True)
                 
-                if not title:
-                    title = link.get_text(strip=True)
-                    # Skip if it's just "See More"
-                    if title.lower() in ['see more', 'learn more', 'read more']:
-                        continue
+                # Skip if title is still a generic action phrase
+                if title.lower() in ['see more', 'learn more', 'read more', 'more content']:
+                    print(f"  ⚠ Skipping generic title: {title}")
+                    continue
                 
-                # Extract description (paragraph text near the link)
+                # Find description by looking near the link
                 description = ""
-                if parent:
-                    # Look for paragraph near this link
-                    para = parent.find('p')
-                    if para:
-                        description = para.get_text(strip=True)
                 
+                # Try to find a paragraph near this link
+                # Strategy: look at all nearby paragraphs and take the first substantive one
+                nearby_paras = []
+                
+                # Look at siblings
+                for sibling in best_link.next_siblings:
+                    if sibling.name == 'p':
+                        nearby_paras.append(sibling)
+                        break  # Just take the first one
+                
+                # Look in parent's siblings
+                if not nearby_paras:
+                    parent = best_link.find_parent()
+                    if parent:
+                        for sibling in parent.next_siblings:
+                            if hasattr(sibling, 'name'):
+                                if sibling.name == 'p':
+                                    nearby_paras.append(sibling)
+                                    break
+                                # Also check if sibling contains a paragraph
+                                para = sibling.find('p')
+                                if para:
+                                    nearby_paras.append(para)
+                                    break
+                
+                # Look forward in the document
+                if not nearby_paras:
+                    next_para = best_link.find_next('p')
+                    if next_para:
+                        nearby_paras.append(next_para)
+                
+                # Get description from first paragraph found
+                if nearby_paras:
+                    desc_text = nearby_paras[0].get_text(strip=True)
+                    # Make sure it's not a "See More" or other nav text
+                    if desc_text and not desc_text.lower().startswith(('see more', 'learn more', 'read more')):
+                        description = desc_text
+                
+                # Fallback to title if no description found
                 if not description:
                     description = title
                 
                 # Check if we have a cached date for this article
                 if article_url in article_dates:
-                    # Use existing date
                     pub_date = article_dates[article_url]
                 else:
-                    # New article - use current time and save it
+                    # New article - use current time
                     pub_date = current_time
                     article_dates[article_url] = pub_date
                     dates_updated = True
@@ -144,13 +187,10 @@ def scrape_articles(max_pages=MAX_PAGES):
                     'pubDate': pub_date
                 })
                 page_count += 1
-                
-                # No need for delay since we're not fetching article pages
-                # time.sleep(DELAY_SECONDS)
             
-            print(f"  Found {page_count} articles on page {page_num}")
+            print(f"  Extracted {page_count} articles from page {page_num}")
             
-            # Rate limiting between page requests
+            # Rate limiting between pages
             if page_num < max_pages:
                 time.sleep(DELAY_SECONDS)
                 
@@ -178,7 +218,7 @@ def escape_xml(text):
 
 def generate_rss_feed(articles, output_file='hrtech_feed.xml'):
     """
-    Generate RSS 2.0 XML feed from articles with actual publication dates.
+    Generate RSS 2.0 XML feed from articles with preserved discovery dates.
     
     Args:
         articles: List of article dictionaries
