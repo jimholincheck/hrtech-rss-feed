@@ -160,11 +160,15 @@ def scrape_articles(max_pages=MAX_PAGES):
                         nearby_paras.append(next_para)
                 
                 # Get description from first paragraph found
-                if nearby_paras:
-                    desc_text = nearby_paras[0].get_text(strip=True)
-                    # Make sure it's not a "See More" or other nav text
-                    if desc_text and not desc_text.lower().startswith(('see more', 'learn more', 'read more')):
-                        description = desc_text
+                if nearby_paras and nearby_paras[0] is not None:
+                    try:
+                        desc_text = nearby_paras[0].get_text(strip=True)
+                        # Make sure it's not a "See More" or other nav text
+                        if desc_text and not desc_text.lower().startswith(('see more', 'learn more', 'read more')):
+                            description = desc_text
+                    except (AttributeError, TypeError):
+                        # If we can't get text for any reason, skip it
+                        pass
                 
                 # Fallback to title if no description found
                 if not description:
