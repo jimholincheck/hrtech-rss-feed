@@ -1,0 +1,48 @@
+name: Update HR Tech RSS Feed
+
+on:
+  # Run daily at 9 AM UTC (4 AM EST / 1 AM PST)
+  schedule:
+    - cron: '0 9 * * *'
+  
+  # Allow manual triggering from GitHub Actions tab
+  workflow_dispatch:
+  
+  # Run on push to main branch (for testing)
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+      
+      - name: Run RSS scraper
+        run: |
+          python scrape_feed.py
+      
+      - name: Commit and push if changed
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "GitHub Actions Bot"
+          git pull origin main
+          git add hrtech_feed.xml article_dates.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update HR Tech RSS feed - $(date -u +'%Y-%m-%d %H:%M:%S UTC')" && git push)
